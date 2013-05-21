@@ -1,6 +1,6 @@
 #include "instruction.h"
-
-Instruction::Instruction(void)
+#include <cstdio>
+Instruction::Instruction()
 {
   // prefixes
   lock_prefix = false;
@@ -13,19 +13,20 @@ Instruction::Instruction(void)
   GS_OR = false;
   branchNotTaken = false;
   branchTaken = false;
-  operandSizeOR = false;
-  addressSizeOR = false;
+  operandSize_OR = false;
+  addressSize_OR = false;
   rex = 0;
 
   length = 0;
-  modRM = 0;
-  vex1 = 0;
-  vex2 = 0;
+  modRM.encoded = 0;
+  vex1.encoded = 0;
+  vex2.encoded = 0;
   patch = 0;
   immediate = 0;
+  prologueSize = 0;
 }
 
-void Instruction::clear(void);
+void Instruction::clear()
 {
   // prefixes
   lock_prefix = false;
@@ -38,16 +39,17 @@ void Instruction::clear(void);
   GS_OR = false;
   branchNotTaken = false;
   branchTaken = false;
-  operandSizeOR = false;
-  addressSizeOR = false;
+  operandSize_OR = false;
+  addressSize_OR = false;
   rex = 0;
 
   length = 0;
-  modRM = 0;
-  vex1 = 0;
-  vex2 = 0;
+  modRM.encoded = 0;
+  vex1.encoded = 0;
+  vex2.encoded = 0;
   patch = 0;
   immediate = 0;
+  prologueSize = 0;  
 }
 
 // returns possible patches
@@ -56,11 +58,12 @@ unsigned Instruction::getPatch(void)
   return patch;
 }
 
-int decodeInstruction(const void *sym)
+int Instruction::decodeInstruction(const void *sym, int n)
 {
   unsigned char *insns = (unsigned char *) sym;
-
+  prologueSize = n;
   decodePrefix(insns);
+  insns += length;  
   decodeOpcode(insns);
   return length;
 }
@@ -134,21 +137,20 @@ void Instruction::decodePrefix(unsigned char *insns)
       default:
         done = 1;
     }
-  } (!done);
+  } while (!done);
 
   // REX prefix is always the last prefix
   if ((*insns & 0xf0) == 0x40)
   {
     rex = *insns;
     length++;
-    insns++;
   }
 }
 
 void Instruction::decodeOpcode(unsigned char *insns)
 {
   // Check select correct opcode map
-  char select_map;
+  int select_map;
   switch (*insns)
   {
     case 0xf8:  // Pop Ev or XOP
@@ -173,7 +175,7 @@ void Instruction::decodeOpcode(unsigned char *insns)
       length += 3;
       insns += 3;
       break;
-    case 0f:
+    case 0x0f:
       if (insns[1] == 0x38) // 3 byte opcode
       {
         select_map = 2;
@@ -202,12 +204,116 @@ void Instruction::decodeOpcode(unsigned char *insns)
     default:
       select_map = 0;
   }
+  printf("map: %d\n opcode %x\n",select_map, *insns);
+  int group = ins_lookup[select_map][*insns];
+  printf("group: %d\n",group);
 
-  char group = 
+  switch (group)
+  {
+    case 0:
+      length += 1;
+      break;
+    case 1:
+      length += 2;
+      break;
+    case 2:
+      length += 4;
+      break;
+    case 3:
+      evalModRM(insns[1]);
+      break;
+    case 4:
+      length += 1;
+      immediate = 1;
+      evalModRM(insns[1]);
+      break;
+    case 5:
+      length += 4;
+      immediate = 4;
+      evalModRM(insns[1]);
+      break;
+    case 6: //invalid
+      length = 0;
+      break;
+    case 7:
+      groupF6F7(insns);
+      break;
+    case 8:
+      immediate = 8;
+      length += 8;
+      evalModRM(insns[1]);
+      break;
+    case 9: // jmp 4byte off (need patch)
+      length += 5;
+      immediate = 4;
+      makePatch();
+      break;
+    case 10:
+      groupFF(insns);
+      break;
+    case 11:
+      group0F00(insns);
+      break;
+    case 12:
+      group3dNOW(insns);
+      break;
+    case 13:
+      groupSSE5A(insns);
+      break;
+  }
 }
-void evalModRM(unsigned char insns)
+
+void Instruction::groupF6F7(unsigned char *insns)
 {
-  modRM.encoded = byte;
+  modRM.encoded = insns[1];
+  if (modRM.bits.reg == 0 || modRM.bits.reg == 1)
+  {
+    if (*insns == 0xf6)
+    {
+      immediate = 1;
+      length += 1;
+    }
+    else
+    {
+      length += 4;
+      immediate = 4;
+    }
+  }
+  evalModRM(insns[1]);
+}
+
+void Instruction::groupFF(unsigned char *insns)
+{
+  modRM.encoded = insns[1];
+  if (modRM.bits.reg == 0 || modRM.bits.reg == 1
+      || modRM.bits.reg == 6)
+    evalModRM(insns[1]);
+  else
+    length = 0;
+}
+
+void Instruction::group0F00(unsigned char *insns)
+{
+  modRM.encoded = insns[1];
+  if (modRM.bits.reg != 6)
+    evalModRM(insns[1]);
+  else
+    length = 0;
+}
+
+void Instruction::group3dNOW(unsigned char *insns)
+{
+  length = 0; //not yet supported
+}
+
+void Instruction::groupSSE5A(unsigned char *insns)
+{
+  length = 0; //not yet supported
+}
+
+void Instruction::evalModRM(unsigned char insns)
+{
+  modRM.encoded = insns;
   //mod == 00 and rm == 5 opcode, modRM, rip + 32bit
   //mod == 00 opcode, modRM,(SIB)
   //mod == 01 opcode,modRM,(SIB),1 byte immediate
@@ -226,4 +332,13 @@ void evalModRM(unsigned char insns)
     (modRM.bits.rm) != 4 ? length += 6 : length += 7;  //check if SIB byte is needed
   else
     length += 2;
+}
+
+void Instruction::makePatch()
+{
+  int n = prologueSize + length;
+  if (modRM.encoded == 0)
+    patch = n*0x100 + n + 2;
+  else
+    patch = n*0x100 + n + 1;
 }
