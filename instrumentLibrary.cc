@@ -11,7 +11,7 @@
 FILE *hook_errors;
 char *current_fn;
 char *lib;
-jmp_buf env;
+sigjmp_buf env;
 
 static void dofunction();
 void hookfailed();
@@ -28,7 +28,7 @@ static void handler(int sig, siginfo_t *si, void *unused)
 {
   printf("Got SIGSEGV at address: 0x%llx\n",(long long) si->si_addr);
   hookfailed();
-  longjmp(env,1);
+  siglongjmp(env,1);
 }    
 
 // instrumented
@@ -100,9 +100,11 @@ int main(int argc, char **argv)
   int n = 0;
   Instruction myInstruction;
   int length = 0;
+
+  // SIGHANDLER RECOVER POINT
+  sigsetjmp(env, SIGSEGV);
   while(true)
   {
-    setjmp(env);
     // Read symbol name from nmout file
     if (! (fgets(buffer, sizeof(buffer), nmout)))
       break;
