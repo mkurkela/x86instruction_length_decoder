@@ -1,5 +1,5 @@
 #include "instruction.h"
-#include <cstdio>
+
 Instruction::Instruction()
 {
   // prefixes
@@ -116,13 +116,15 @@ void Instruction::decodePrefix(unsigned char *insns)
         break;
       case 0x64:
         FS_OR = true;
-        length++;
-        insns++;
+        immediate = 4;
+        length += 5;
+        insns += 5;
         break;
       case 0x65:
         GS_OR = true;
-        length++;
-        insns++;
+        immediate = 4;
+        length += 5;
+        insns += 5;
         break;
       case 0x66:
         operandSize_OR = true;
@@ -204,10 +206,8 @@ void Instruction::decodeOpcode(unsigned char *insns)
     default:
       select_map = 0;
   }
-  printf("map: %d\n opcode %x\n",select_map, *insns);
-  int group = ins_lookup[select_map][*insns];
-  printf("group: %d\n",group);
 
+  int group = ins_lookup[select_map][*insns];
   switch (group)
   {
     case 0:
@@ -217,7 +217,7 @@ void Instruction::decodeOpcode(unsigned char *insns)
       length += 2;
       break;
     case 2:
-      length += 4;
+      length += 5;
       break;
     case 3:
       evalModRM(insns[1]);
@@ -303,11 +303,13 @@ void Instruction::group0F00(unsigned char *insns)
 
 void Instruction::group3dNOW(unsigned char *insns)
 {
+  insns = 0;
   length = 0; //not yet supported
 }
 
 void Instruction::groupSSE5A(unsigned char *insns)
 {
+  insns = 0;
   length = 0; //not yet supported
 }
 
@@ -321,7 +323,6 @@ void Instruction::evalModRM(unsigned char insns)
   //mod == 11 opcode,modRM
   if (modRM.bits.mod == 0 && modRM.bits.rm == 5)
   {
-    length += 6;
     makePatch();
   }
   else if (modRM.bits.mod == 0)
@@ -338,7 +339,13 @@ void Instruction::makePatch()
 {
   int n = prologueSize + length;
   if (modRM.encoded == 0)
-    patch = n*0x100 + n + 2;
+  {
+    patch = (n+0x5)*0x100 + n + 1; //jump 4byte off
+    length += 5;
+  }
   else
-    patch = n*0x100 + n + 1;
+  {
+    patch = (n + 0x6)*0x100 + n + 2; //modRM == 5
+    length += 6;
+  }
 }

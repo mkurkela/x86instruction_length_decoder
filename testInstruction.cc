@@ -5,7 +5,6 @@
 #include "instruction.h"
 #include <dlfcn.h>
 
-
 int main(int argc, char **argv)
 {
   if (argc != 2)
