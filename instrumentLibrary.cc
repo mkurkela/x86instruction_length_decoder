@@ -21,7 +21,7 @@ void callHook(const char *fn, const char *lib)
 {
   IgHook::TypedData<void()>dofunction_hook = { { 0, fn, 0, lib, &dofunction, 0, 0, 0 } };
   IgHook::hook(dofunction_hook.raw); 
-  (*dofunction_hook.typed.chain)();
+//  (*dofunction_hook.typed.chain)();
 }
 
 static void handler(int sig, siginfo_t *si, void *unused)
